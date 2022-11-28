@@ -9,6 +9,7 @@ from datasets import *
 ##############################
 #        Encoder 
 ##############################
+# https://medium.com/@sahil_g/bicyclegan-c104b2c22448
 class Encoder(nn.Module):
     def __init__(self, latent_dim):
         super(Encoder, self).__init__()
@@ -83,7 +84,7 @@ class Generator(nn.Module):
 #        Discriminator
 ##############################
 class Discriminator(nn.Module):
-    def __init__(self, in_channels=3):
+    def __init__(self, input_shape):
         super(Discriminator, self).__init__()
         """ The discriminator used in both cVAE-GAN and cLR-GAN
             
@@ -96,9 +97,42 @@ class Discriminator(nn.Module):
             Returns: 
                 discriminator output: could be a single value or a matrix depending on the type of GAN
         """
-    def forward(self, x):
+        def discriminator_block(in_filters, out_filters, normalize=True):
+            """Returns downsampling layers of each discriminator block"""
+            layers = [nn.Conv2d(in_filters, out_filters, 4, stride=2, padding=1)]
+            if normalize:
+                layers.append(nn.BatchNorm2d(out_filters, 0.8))
+            layers.append(nn.LeakyReLU(0.2))
+            return layers        
+        
+        channels, _, _ = input_shape
+        # Extracts discriminator models
+        self.models = nn.ModuleList()
+        for i in range(3):
+            self.models.add_module(
+                "disc_%d" % i,
+                nn.Sequential(
+                    *discriminator_block(channels, 64, normalize=False),
+                    *discriminator_block(64, 128),
+                    *discriminator_block(128, 256),
+                    *discriminator_block(256, 512),
+                    nn.Conv2d(512, 1, 3, padding=1)
+                ),
+            )        
+        self.downsample = nn.AvgPool2d(3, stride=2, padding=[1, 1], count_include_pad=False)
 
-        return 
+    def forward(self, x):
+        outputs = []
+        for m in self.models:
+            outputs.append(m(x))
+            x = self.downsample(x)
+        return outputs
+    
+    def compute_loss(self, x, gt):
+        """Computes the MSE between model output and scalar gt"""
+        loss = sum([torch.mean((out - gt) ** 2) for out in self.forward(x)])
+        return loss
+
 
 #UNet
 class UNet(nn.Module):
